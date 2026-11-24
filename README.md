@@ -1,91 +1,149 @@
-# Grabador de Audio con PyAudio
+# Grabador de Audio con sounddevice
 
-Un script en Python para grabar audio desde el micrófono usando PyAudio, con soporte para grabación indefinida o por tiempo definido, selección de dispositivo de entrada, y visualización del tiempo transcurrido en la consola.
+Grabador de micrófono en Python con **sounddevice** (PortAudio): grabación indefinida o por tiempo definido, selección de dispositivo de entrada, interfaz gráfica con bandeja del sistema y guardado incremental en WAV.
 
 ---
 
 ## 📋 Características
 
-- Graba audio en formato WAV (mono, 48 kHz, 16-32 bits).
-- Grabación indefinida (hasta que el usuario detenga con `Ctrl+C`).
-- Opción para grabar por un tiempo específico.
-- Muestra el tiempo transcurrido y el tiempo total o estimado en la consola.
-- Permite seleccionar el dispositivo de entrada de audio.
-- Lista los dispositivos de audio disponibles.
-- Guarda los archivos de audio en la carpeta `records`.
+- Graba audio en formato WAV (mono, 48 kHz, 32 bits).
+- Grabación indefinida (Ctrl+C en la consola / botón **Detener** en la interfaz).
+- Opción de grabar durante un número determinado de segundos.
+- Muestra el tiempo transcurrido, el tamaño de los datos y los desbordamientos de buffer.
+- Permite elegir el dispositivo de entrada y listar los disponibles.
+- Guarda en `records/sample_N.wav`, usando siempre el **primer número libre** (nunca sobrescribe grabaciones anteriores).
+- La interfaz gráfica sigue grabando con la ventana oculta en la bandeja del sistema.
+- El audio se **escribe a disco mientras se graba**, tanto en la consola como en la interfaz, así que no se pierde todo si el proceso se cierra de golpe.
 
 ---
 
 ## 📦 Requisitos
 
-- Python 3.6 o superior.
-- Librerías requeridas:
-  - `pyaudio`
-  - `numpy` (opcional, solo si se usa visualización en tiempo real)
-
-Puedes instalar las dependencias con:
+- **Python 3.11 o superior** (probado con Python 3.14.2; `numpy 2.3.3` y `Pillow 13.0.0` exigen Python >= 3.11).
+- Dependencias, fijadas en `requirements.txt`: `numpy`, `sounddevice`, `pystray` y `Pillow`.
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
+
+> En Windows, `sounddevice` incluye PortAudio en el wheel, así que no hace falta compilador. `PyAudio` no publica wheels para Python 3.14/3.15 en Windows, por eso el proyecto se migró a `sounddevice`.
+
+---
 
 ## 🛠 Instalación
 
-1. Clona este repositorio o descarga el script.
-2. Instala las dependencias mencionadas arriba.
-3. Ejecuta el script según las instrucciones de uso.
+1. Clona este repositorio o descarga los archivos.
+2. Crea y activa un entorno virtual (recomendado):
 
-
-## 🚀 Uso
-### 📝 Argumentos del script:
-| Argumento | Descripción                                                                    | Ejemplo |
-|:----------|:-------------------------------------------------------------------------------|:--------|
-|`--t`      |Duración de la grabación en segundos (opcional, por defecto es indefinida).     |`--t 15` |
-|`--d`      |Índice del dispositivo de entrada (opcional, por defecto usa el predeterminado).|`--d 2`  |
-|`--l`      |dLista los dispositivos de audio disponibles.                                   |`--ld`   |
-
-## 🎤 Ejemplos de uso
-
-1. Grabación indefinida (por defecto):
 ```bash
-python audio_recorder.py
+python -m venv venv
+venv\Scripts\activate
 ```
-- La grabación se detiene al presionar Ctrl+C.
-- Muestra el tiempo transcurrido y el tiempo máximo estimado basado en el espacio libre en el disco.
 
-2. Grabación por 15 segundos:
-```bash
-python audio_recorder.py --t 15
-```
-- Graba por 15 segundos y muestra el tiempo transcurrido.
+3. Instala las dependencias:
 
-3. Listar dispositivos de audio disponibles:
 ```bash
-python audio_recorder.py --ld
+python -m pip install -r requirements.txt
 ```
-- Muestra una lista de los dispositivos de audio disponibles y sus índices.
 
-4. Grabación indefinida con dispositivo específico:
+4. Ejecuta el script de consola o la interfaz gráfica según las instrucciones de uso.
+
+---
+
+## 🚀 Uso (consola)
+
+| Argumento | Descripción | Ejemplo |
+|:----------|:------------|:--------|
+| `--t` | Duración de la grabación en segundos (por defecto, indefinida). | `--t 15` |
+| `--d` | Índice del dispositivo de entrada (por defecto, el predeterminado). | `--d 2` |
+| `--ld` | Lista los dispositivos de audio disponibles. | `--ld` |
+
+Ejemplos:
+
 ```bash
-python audio_recorder.py --d 2
+python record.py                 # grabación indefinida, detener con Ctrl+C
+python record.py --t 15          # grabar 15 segundos
+python record.py --ld            # listar dispositivos
+python record.py --d 2           # usar el dispositivo con índice 2
 ```
-- Usa el dispositivo de entrada con índice 2 para grabar.
+
+En grabaciones indefinidas se muestra el tiempo máximo estimado según el espacio libre del disco. Los bloques de audio se escriben a disco sobre la marcha; al detener se indica el total de bytes y los desbordamientos ocurridos.
+
+---
+
+## 🖥 Interfaz gráfica
+
+Una ventana con botones **Iniciar** y **Detener**, selector de micrófono, reloj de grabación, tamaño de los datos y contador de desbordamientos.
+
+### Cómo abrirla
+
+- Doble clic en **`grabador.bat`** (abre sin consola; usa el `venv` local si existe y, si no, busca Python en el PATH).
+- O desde la terminal:
+
+```bash
+venv\Scripts\python record_gui.py
+```
+
+### Bandeja del sistema
+
+- Al **minimizar** o **cerrar** la ventana (✕), esta se oculta y queda un icono de micrófono en el área de notificaciones de la barra de tareas.
+- La grabación **continúa** mientras la ventana está oculta. El icono se pone **rojo** cuando está grabando.
+- **Clic izquierdo** en el icono: muestra la ventana.
+- **Clic derecho**: menú con *Mostrar ventana*, *Iniciar grabación*, *Detener grabación* y *Salir*. *Salir* detiene la grabación antes de cerrar.
+- En Windows 11 puede que el icono aparezca primero dentro del menú **∧** de iconos ocultos; arrástralo a la bandeja para fijarlo.
+
+### Diferencias respecto al script de consola
+
+- La captura usa el *callback* de `sounddevice`, por lo que imprimir en pantalla o mover la ventana no puede bloquear la lectura del micrófono (evita desbordamientos).
+- Los comandos de la bandeja se envían a la interfaz por una cola, para no llamar a Tkinter desde otros hilos.
+- La escritura a disco se hace en un hilo propio con una cola de bloques; el archivo se cierra correctamente al detener.
+
+---
 
 ## 📂 Estructura del proyecto
-```bash
-audio_recorder/
-│── audio_recorder.py  # Script principal
-│── records/           # Carpeta donde se guardan las grabaciones
+
+```text
+Record_Audio_Background/
+├── record.py         # Script de consola y utilidades compartidas
+├── record_gui.py     # Interfaz gráfica con bandeja del sistema
+├── grabador.bat      # Lanzador de la interfaz (sin consola)
+├── requirements.txt  # Dependencias fijadas
+└── records/          # Grabaciones (se crea automáticamente)
 ```
 
+---
+
 ## ⚙ Configuración
-- Tasa de muestreo (RATE): 48000 Hz (puedes modificarla en el código si es necesario).
-- Canales (CHANNELS): 1 (mono).
-- Formato (FORMAT): pyaudio.paInt32 (32 bits por muestra).
-- Tamaño del buffer (CHUNK): 2048 (puedes ajustarlo si experimentas problemas de latencia).
+
+- Tasa de muestreo (`RATE`): 48000 Hz.
+- Canales (`CHANNELS`): 1 (mono).
+- Formato (`DTYPE`): `int32` (32 bits por muestra; `SAMPLE_WIDTH = 4`).
+- Tamaño del bloque (`CHUNK`): 2048 muestras.
+
+Estos valores están definidos en `record.py` y se comparten con la interfaz gráfica.
+
+---
+
+## 🧠 Desarrollo con vibe-coding y OpenCode
+
+Este proyecto se programó usando **vibe-coding con [OpenCode](https://opencode.ai/)**. Es decir, el desarrollo se llevó a cabo describiendo en lenguaje natural lo que se quería conseguir —«grabar audio en segundo plano», «migrar de PyAudio a sounddevice para Python 3.14», «añadir un icono en la bandeja», «no perder audio si cierro la ventana»— y dejando que OpenCode generara, modificara y revisara el código de forma iterativa.
+
+El proceso seguido fue:
+
+1. Script inicial de consola con PyAudio y argumentos `--t`, `--d` y `--ld`.
+2. Migración a `sounddevice` para eliminar la dependencia de compiladores en Python 3.14.
+3. Creación de `record_gui.py`: ventana Tkinter, bandeja del sistema con `pystray`, selector de micrófono y escritura incremental con cola + hilo escritor.
+4. Creación de `grabador.bat` para lanzar la interfaz sin consola, con fallback a Python del PATH.
+5. Revisión final del código y corrección de detalles: nombres de archivo sin sobrescrituras, estimación de espacio con el ancho de muestra real, manejo de errores al abrir el dispositivo y documentación.
+
+> El resultado se verificó localmente (compilación, importación de módulos y lógica de nombres de archivo). La documentación de este README también se mantuvo con OpenCode.
+
+---
 
 ## 🔧 Solución de problemas
 
-- Error: "No Default Input Device": Asegúrate de que tienes un micrófono conectado y seleccionado correctamente. Usa --ld para listar los dispositivos disponibles.
-- Audio distorsionado: Prueba ajustando la tasa de muestreo (RATE) o el tamaño del buffer (CHUNK).
-- Problemas de permisos: Asegúrate de que el script tenga permisos para acceder al micrófono y escribir en la carpeta records.
+- **"No Default Input Device"**: conecta un micrófono y compruébalo con `python record.py --ld`.
+- **Error `PortAudioError` al usar `--d`**: el índice no corresponde a un dispositivo de entrada; compruébalo con `--ld`.
+- **Audio distorsionado o desbordamientos**: prueba a ajustar `RATE` o `CHUNK` en `record.py` y a cerrar otras aplicaciones que usen el micrófono.
+- **El icono de la bandeja no aparece**: en Windows 11 revisa el menú **∧** de iconos ocultos.
+- **Permisos**: asegúrate de que Python tenga acceso al micrófono y pueda escribir en la carpeta `records`.

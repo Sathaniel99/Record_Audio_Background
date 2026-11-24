@@ -1,76 +1,118 @@
-import pyaudio
-import wave
-import os
-import time
-import shutil
-from datetime import timedelta
-import argparse
+"""Grabador de audio desde la consola con sounddevice (PortAudio)."""
 
-def filename_():
-    if not os.path.exists("records"):
-        os.makedirs("records")
-    archivos = [archivo for archivo in os.listdir("records") if archivo.endswith(".wav")]
-    return len(archivos) + 1
+import argparse
+import os
+import shutil
+import time
+import wave
+from datetime import timedelta
+
+import numpy as np
+import sounddevice as sd
+
+DTYPE = 'int32'
+SAMPLE_WIDTH = np.dtype(DTYPE).itemsize
+CHUNK = 2048
+CHANNELS = 1  # Mono
+RATE = 48000
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+RECORDS_DIR = os.path.join(BASE_DIR, "records")
+
+
+def next_filename():
+    """Devuelve el primer sample_N.wav libre dentro de records/.
+
+    Busca el primer número disponible en lugar de contar archivos, para no
+    sobrescribir grabaciones anteriores cuando faltan números por medio.
+    """
+    os.makedirs(RECORDS_DIR, exist_ok=True)
+    n = 1
+    while os.path.exists(os.path.join(RECORDS_DIR, f"sample_{n}.wav")):
+        n += 1
+    return os.path.join(RECORDS_DIR, f"sample_{n}.wav")
+
+
+def get_input_devices():
+    """Devuelve una lista de (índice, nombre) con dispositivos de entrada."""
+    return [
+        (i, dev["name"])
+        for i, dev in enumerate(sd.query_devices())
+        if dev["max_input_channels"] > 0
+    ]
+
 
 def list_audio_devices():
-    p = pyaudio.PyAudio()
     print("Dispositivos de audio disponibles:")
-    for i in range(p.get_device_count()):
-        dev = p.get_device_info_by_index(i)
-        print(f"{i}: {dev['name']} (Entrada: {dev['maxInputChannels'] > 0})")
-    p.terminate()
+    for i, dev in enumerate(sd.query_devices()):
+        print(f"{i}: {dev['name']} (Entrada: {dev['max_input_channels'] > 0})")
+
 
 def get_free_space():
-    # Obtener espacio libre en el disco (en bytes)
-    total, used, free = shutil.disk_usage(".")
-    return free
+    """Espacio libre, en bytes, del disco donde se guardan las grabaciones."""
+    return shutil.disk_usage(BASE_DIR).free
 
-def estimate_max_duration(free_space_bytes, rate=48000, channels=1, sample_width=2):
-    # Tasa de bits: rate * channels * sample_width (bytes por segundo)
-    bit_rate = rate * channels * sample_width
-    # Tiempo máximo en segundos
-    max_seconds = free_space_bytes / bit_rate
-    return int(max_seconds)
+
+def estimate_max_duration(free_space_bytes, rate=RATE, channels=CHANNELS,
+                          sample_width=SAMPLE_WIDTH):
+    """Segundos grabables según el espacio libre y el formato real del WAV."""
+    bytes_per_second = rate * channels * sample_width
+    return int(free_space_bytes / bytes_per_second)
+
 
 def format_time(seconds):
-    return str(timedelta(seconds=seconds))
+    return str(timedelta(seconds=int(seconds)))
 
-def record_audio_pyaudio(duration=None, device_index=None):
-    CHUNK = 2048
-    FORMAT = pyaudio.paInt32
-    CHANNELS = 1  # Mono
-    RATE = 48000
-    filename = os.path.join("records", f"sample_{filename_()}.wav")
-    p = pyaudio.PyAudio()
+
+def record_audio(duration=None, device_index=None):
+    """Graba hasta `duration` segundos o hasta Ctrl+C; devuelve el archivo.
+
+    Los bloques se escriben en disco mientras se graban (no al final), de modo
+    que no se acumula toda la grabación en memoria y se conserva lo ya grabado
+    incluso si el proceso termina de forma brusca.
+    """
+    filename = next_filename()
     if device_index is None:
-        device_index = p.get_default_input_device_info()['index']
-    stream = p.open(
-        format=FORMAT,
-        channels=CHANNELS,
-        rate=RATE,
-        input=True,
-        input_device_index=device_index,
-        frames_per_buffer=CHUNK
-    )
+        device_index = sd.default.device[0]
 
-    # Calcular tiempo máximo estimado si la grabación es indefinida
-    free_space = get_free_space()
-    max_duration = estimate_max_duration(free_space, RATE, CHANNELS, p.get_sample_size(FORMAT))
-    max_time_str = format_time(max_duration)
-
+    max_time_str = format_time(estimate_max_duration(get_free_space()))
     print("Grabando audio... (Presiona Ctrl+C para detener)")
-    frames = []
-    start_time = time.time()
+
+    stream = None
+    wf = None
+    written = 0
+    overflows = 0
+    result = None
+    start_time = time.monotonic()
+
     try:
+        stream = sd.InputStream(
+            device=device_index,
+            channels=CHANNELS,
+            samplerate=RATE,
+            dtype=DTYPE,
+            blocksize=CHUNK,
+        )
+        wf = wave.open(filename, "wb")
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(SAMPLE_WIDTH)
+        wf.setframerate(RATE)
+
+        stream.start()
         while True:
-            data = stream.read(CHUNK, exception_on_overflow=False)
-            frames.append(data)
-            elapsed_time = int(time.time() - start_time)
-            time_str = format_time(elapsed_time)
+            # El segundo valor indica desbordamiento del buffer de entrada.
+            data, overflowed = stream.read(CHUNK)
+            wf.writeframes(data.tobytes())
+            written += data.nbytes
+            if overflowed:
+                overflows += 1
+
+            elapsed = int(time.monotonic() - start_time)
+            time_str = format_time(elapsed)
             if duration is not None:
-                if elapsed_time >= duration:
-                    break
                 print(f"\r{time_str}/{format_time(duration)}", end="", flush=True)
+                if elapsed >= duration:
+                    break
             else:
                 print(f"\r{time_str}/{max_time_str}", end="", flush=True)
     except KeyboardInterrupt:
@@ -78,34 +120,46 @@ def record_audio_pyaudio(duration=None, device_index=None):
     except Exception as e:
         print(f"\nError durante la grabación: {e}")
     finally:
-        stream.stop_stream()
-        stream.close()
-        p.terminate()
-        if frames:
-            wf = wave.open(filename, "wb")
-            wf.setnchannels(CHANNELS)
-            wf.setsampwidth(p.get_sample_size(FORMAT))
-            wf.setframerate(RATE)
-            wf.writeframes(b''.join(frames))
-            wf.close()
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
+        if wf is not None:
+            try:
+                wf.close()  # Escribe la cabecera WAV definitiva.
+            except Exception:
+                pass
+
+        if written:
             print(f"\nAudio guardado como {filename}")
-            return filename
+            print(f"Datos escritos: {written} bytes  ·  {overflows} desbordamientos")
+            result = filename
         else:
+            if os.path.exists(filename):
+                os.remove(filename)
             print("\nNo se guardó ningún archivo, no hay datos de audio.")
-            return None
+
+    return result
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Grabador de audio con PyAudio.")
-    parser.add_argument("--t", type=int, default=None, help="Duración de la grabación en segundos (opcional, por defecto es indefinida)")
-    parser.add_argument("--d", type=int, default=None, help="Índice del dispositivo de entrada")
-    parser.add_argument("--ld", action="store_true", help="Listar dispositivos de audio disponibles")
+    parser = argparse.ArgumentParser(description="Grabador de audio con sounddevice.")
+    parser.add_argument("--t", type=int, default=None,
+                        help="Duración de la grabación en segundos (opcional, por defecto es indefinida)")
+    parser.add_argument("--d", type=int, default=None,
+                        help="Índice del dispositivo de entrada")
+    parser.add_argument("--ld", action="store_true",
+                        help="Listar dispositivos de audio disponibles")
     args = parser.parse_args()
-    
+
     if args.ld:
         list_audio_devices()
         return
-    
-    record_audio_pyaudio(duration=args.t, device_index=args.d)
+
+    record_audio(duration=args.t, device_index=args.d)
+
 
 if __name__ == "__main__":
     main()
